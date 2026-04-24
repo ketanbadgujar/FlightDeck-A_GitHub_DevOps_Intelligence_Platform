@@ -1,13 +1,11 @@
-version: "3.9"
-
 services:
   postgres:
     image: postgres:15
     container_name: devops_postgres
     environment:
-      POSTGRES_DB: devops_platform
-      POSTGRES_USER: devops_user
-      POSTGRES_PASSWORD: devops_pass
+      POSTGRES_DB: ${POSTGRES_DB:-devops_platform}
+      POSTGRES_USER: ${POSTGRES_USER:-devops_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devops_pass}
     ports:
       - "5432:5432"
     volumes:
@@ -29,6 +27,88 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  metrics:
+    build:
+      context: .
+      dockerfile: services/metrics/Dockerfile
+    container_name: devops_metrics
+    ports:
+      - "8002:8002"
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-devops_platform}
+      POSTGRES_USER: ${POSTGRES_USER:-devops_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devops_pass}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  ml:
+    build:
+      context: .
+      dockerfile: services/ml/Dockerfile
+    container_name: devops_ml
+    ports:
+      - "8003:8003"
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-devops_platform}
+      POSTGRES_USER: ${POSTGRES_USER:-devops_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devops_pass}
+    volumes:
+      - ./models:/app/models
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+    container_name: devops_api
+    ports:
+      - "8000:8000"
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-devops_platform}
+      POSTGRES_USER: ${POSTGRES_USER:-devops_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devops_pass}
+      METRICS_SERVICE_URL: http://metrics:8002
+      ML_SERVICE_URL: http://ml:8003
+    depends_on:
+      postgres:
+        condition: service_healthy
+      metrics:
+        condition: service_started
+      ml:
+        condition: service_started
+    restart: unless-stopped
+
+  alerting:
+    build:
+      context: .
+      dockerfile: services/alerting/Dockerfile
+    container_name: devops_alerting
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-devops_platform}
+      POSTGRES_USER: ${POSTGRES_USER:-devops_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devops_pass}
+      API_GATEWAY_URL: http://api:8000
+      GITHUB_TARGET_REPO: ${GITHUB_TARGET_REPO:-fastapi/fastapi}
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
+      SLACK_CHANNEL_ID: ${SLACK_CHANNEL_ID:-}
+    depends_on:
+      api:
+        condition: service_started
+    restart: unless-stopped
 
 volumes:
   postgres_data:

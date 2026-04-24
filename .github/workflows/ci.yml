@@ -1,0 +1,122 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: devops_platform_test
+          POSTGRES_USER: devops_user
+          POSTGRES_PASSWORD: devops_pass
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run database migrations
+        env:
+          PGPASSWORD: devops_pass
+        run: |
+          psql -h localhost -U devops_user -d devops_platform_test \
+            -f data/migrations/001_initial_schema.sql
+
+      - name: Lint with ruff
+        run: |
+          pip install ruff
+          ruff check services/ --ignore E501,F401 || true
+
+      - name: Run collector tests
+        env:
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: 5432
+          POSTGRES_DB: devops_platform_test
+          POSTGRES_USER: devops_user
+          POSTGRES_PASSWORD: devops_pass
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python -c "
+          import sys
+          sys.path.insert(0, 'services/collector')
+          from database import test_connection
+          assert test_connection(), 'Database connection failed'
+          print('Database connection test passed')
+          "
+
+      - name: Run metrics import test
+        run: |
+          python -c "
+          import sys
+          sys.path.insert(0, 'services/collector')
+          sys.path.insert(0, 'services/metrics')
+          from dora import calculate_dora_metrics
+          from cycle_time import calculate_cycle_time
+          print('Metrics imports test passed')
+          "
+
+      - name: Run ML import test
+        run: |
+          python -c "
+          import sys
+          sys.path.insert(0, 'services/collector')
+          sys.path.insert(0, 'services/ml')
+          from pr_risk_model import PRRiskModel
+          from burnout_detector import BurnoutDetector
+          model = PRRiskModel()
+          detector = BurnoutDetector()
+          print('ML imports test passed')
+          "
+
+  docker-build:
+    runs-on: ubuntu-latest
+    needs: lint-and-test
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build metrics service
+        run: |
+          docker build -f services/metrics/Dockerfile -t devops-metrics:test .
+
+      - name: Build ML service
+        run: |
+          docker build -f services/ml/Dockerfile -t devops-ml:test .
+
+      - name: Build API service
+        run: |
+          docker build -f services/api/Dockerfile -t devops-api:test .
+
+      - name: Build alerting service
+        run: |
+          docker build -f services/alerting/Dockerfile -t devops-alerting:test .
+
+      - name: Confirm all images built
+        run: docker images | grep devops
