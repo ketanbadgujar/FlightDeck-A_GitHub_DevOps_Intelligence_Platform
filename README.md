@@ -1,4 +1,4 @@
-# 🚀 GitHub DevOps Intelligence Platform
+# 🚀 FlightDeck - GitHub DevOps Intelligence Platform
 
 > **Real-time DevOps analytics powered by machine learning.**
 > Track DORA metrics, predict PR risk with XGBoost, and detect contributor burnout with Isolation Forest — all in one beautiful dashboard.
